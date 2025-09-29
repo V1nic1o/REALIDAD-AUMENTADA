@@ -88,7 +88,7 @@ public class CatalogManager : MonoBehaviour
         int thumbnailLayer = LayerMask.NameToLayer("ThumbnailLayer");
         if (thumbnailLayer == -1)
         {
-            Debug.LogError("¡ERROR CRÍTICO! La capa 'ThumbnailLayer' no existe. Créala en 'Edit -> Project Settings -> Tags and Layers'.");
+            Debug.LogError("¡ERROR CRÍTICO! La capa 'ThumbnailLayer' no existe.");
             return;
         }
 
@@ -105,6 +105,10 @@ public class CatalogManager : MonoBehaviour
         }
         string[] subcategoryNames = indexFile.text.Split(new[] { "\r\n", "\n" }, System.StringSplitOptions.RemoveEmptyEntries);
 
+        // --- INICIO DE LA MODIFICACIÓN ---
+        // Forzamos al layout principal a reconstruirse para tener el ancho correcto al inicio.
+        LayoutRebuilder.ForceRebuildLayoutImmediate(contentContainer as RectTransform);
+
         foreach (string subcategoryName in subcategoryNames)
         {
             GameObject subcategoryHeader = Instantiate(subcategoryPrefab, contentContainer);
@@ -114,9 +118,32 @@ public class CatalogManager : MonoBehaviour
             GameObject gridContainer = new GameObject(subcategoryName + " Grid");
             gridContainer.transform.SetParent(contentContainer, false);
             GridLayoutGroup gridLayout = gridContainer.AddComponent<GridLayoutGroup>();
-            gridLayout.padding = new RectOffset(10, 10, 10, 10);
-            gridLayout.cellSize = new Vector2(150, 150);
-            gridLayout.spacing = new Vector2(15, 15);
+            
+            // 1. AUMENTAMOS LA ALTURA DE LA CELDA PARA DAR ESPACIO AL NOMBRE
+            Vector2 cellSize = new Vector2(150, 180); // 150 para la imagen + 30 para el texto
+            Vector2 spacing = new Vector2(15, 15);
+            RectOffset padding = new RectOffset(10, 10, 10, 10);
+            
+            // 2. CALCULAMOS CUÁNTAS COLUMNAS CABEN EN EL ANCHO DEL PANEL
+            float parentWidth = (contentContainer as RectTransform).rect.width;
+            int columnCount = Mathf.FloorToInt(
+                (parentWidth - padding.left - padding.right + spacing.x) / 
+                (cellSize.x + spacing.x)
+            );
+            columnCount = Mathf.Max(1, columnCount); // Aseguramos que haya al menos 1 columna
+
+            // 3. CONFIGURAMOS EL GRID CON LOS VALORES CALCULADOS
+            gridLayout.padding = padding;
+            gridLayout.cellSize = cellSize; 
+            gridLayout.spacing = spacing;
+            gridLayout.constraint = GridLayoutGroup.Constraint.FixedColumnCount; // Fijamos el número de columnas
+            gridLayout.constraintCount = columnCount;
+
+            ContentSizeFitter fitter = gridContainer.AddComponent<ContentSizeFitter>();
+            fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+            fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            
+            // --- FIN DE LA MODIFICACIÓN ---
 
             string modelsPath = $"{CATALOG_BASE_PATH}/{categoryName}/{subcategoryName}";
             var models = Resources.LoadAll<GameObject>(modelsPath);
@@ -163,10 +190,7 @@ public class CatalogManager : MonoBehaviour
             yield break;
         }
         
-        // --- INICIO DE LA CORRECCIÓN ---
-        // Usamos la medida más grande (ancho o alto) en lugar de la diagonal 3D.
         float objectSize = Mathf.Max(bounds.size.x, bounds.size.y);
-        // --- FIN DE LA CORRECCIÓN ---
         
         float cameraSize = (objectSize / 2f);
         cam.orthographicSize = cameraSize * zoomMultiplier;
