@@ -2,6 +2,8 @@ using UnityEngine;
 using UnityEngine.UI;
 using System.Collections.Generic;
 using System.Collections;
+using TMPro;
+using System.IO;
 
 public class CatalogManager : MonoBehaviour
 {
@@ -18,21 +20,21 @@ public class CatalogManager : MonoBehaviour
     public Transform contentContainer;
     public GameObject subcategoryPrefab;
     public GameObject itemCardPrefab;
+    public GameObject thumbnailCameraPrefab;
     
     [Header("Configuración de Thumbnails (Ajuste Fino)")]
-    [Tooltip("Ajusta la rotación del modelo.")]
     public Vector3 modelRotation = new Vector3(15, -30, 0);
-    [Tooltip("Mueve el modelo ligeramente desde el centro para un ajuste final.")]
     public Vector3 positionFineTune = new Vector3(0, 0, 0);
-    [Tooltip("Multiplicador de escala. 1 = tamaño normal, 1.5 = 50% más grande.")]
     public float scaleMultiplier = 1.0f;
-    [Tooltip("Ajuste del zoom automático. 1 = encuadre perfecto, 1.2 = aleja la cámara (más borde).")]
     public float zoomMultiplier = 1.2f;
 
     private GameObject _thumbnailCameraRig;
-    private bool isPanelOpen = false;
     private const string CATALOG_BASE_PATH = "Catalogo";
     public static GameObject SelectedModelPrefab { get; private set; }
+    private Coroutine _displayCategoryCoroutine;
+    
+    private string _thumbnailCachePath;
+    private Dictionary<string, Sprite> _runtimeCache = new Dictionary<string, Sprite>();
 
     void Start()
     {
@@ -46,117 +48,110 @@ public class CatalogManager : MonoBehaviour
         {
             closeButton.onClick.AddListener(CloseCatalogPanel);
         }
-        isPanelOpen = false;
+
+        _thumbnailCachePath = Path.Combine(Application.persistentDataPath, "ThumbnailCache");
+        if (!Directory.Exists(_thumbnailCachePath))
+        {
+            Directory.CreateDirectory(_thumbnailCachePath);
+            Debug.Log($"Carpeta de caché de miniaturas creada en: {_thumbnailCachePath}");
+        }
     }
 
     #region Lógica para Abrir y Cerrar el Panel
-
     public void OpenCatalogPanel()
     {
-        isPanelOpen = true;
         catalogPanel.SetActive(true);
         if (toggleButton != null) toggleButton.gameObject.SetActive(false);
-        if (toggleButton != null && iconOpen != null && iconClose != null) toggleButton.image.sprite = iconClose;
-        
         DisplayCategory("Vegetacion");
-        Debug.Log("🔼 Panel abierto");
     }
 
     public void CloseCatalogPanel()
     {
-        isPanelOpen = false;
         catalogPanel.SetActive(false);
         if (toggleButton != null) toggleButton.gameObject.SetActive(true);
-        if (toggleButton != null && iconOpen != null && iconClose != null) toggleButton.image.sprite = iconOpen;
-        
         DestroyThumbnailCameraRig();
-        Debug.Log("🔽 Panel cerrado");
     }
-
     #endregion
 
     #region Lógica del Catálogo Dinámico
-
+    
     public void ShowVegetacionCategory() { DisplayCategory("Vegetacion"); }
     public void ShowSuperficiesCategory() { DisplayCategory("Superficies"); }
     public void ShowDecoracionCategory() { DisplayCategory("Decoracion"); }
 
-    private void DisplayCategory(string categoryName)
+    public void DisplayCategory(string categoryName)
+    {
+        if (_displayCategoryCoroutine != null)
+        {
+            StopCoroutine(_displayCategoryCoroutine);
+        }
+        _displayCategoryCoroutine = StartCoroutine(DisplayCategory_Coroutine(categoryName));
+    }
+
+    private IEnumerator DisplayCategory_Coroutine(string categoryName)
     {
         DestroyThumbnailCameraRig();
         
         int thumbnailLayer = LayerMask.NameToLayer("ThumbnailLayer");
-        if (thumbnailLayer == -1)
-        {
-            Debug.LogError("¡ERROR CRÍTICO! La capa 'ThumbnailLayer' no existe.");
-            return;
-        }
+        if (thumbnailLayer == -1) { Debug.LogError("La capa 'ThumbnailLayer' no existe."); yield break; }
 
         _thumbnailCameraRig = CreateThumbnailCameraRig(thumbnailLayer);
+        if (_thumbnailCameraRig == null) yield break;
 
         foreach (Transform child in contentContainer) Destroy(child.gameObject);
 
         string indexPath = $"{CATALOG_BASE_PATH}/{categoryName}/{categoryName}_index";
         TextAsset indexFile = Resources.Load<TextAsset>(indexPath);
-        if (indexFile == null)
-        {
-            Debug.LogError($"No se encontró el archivo de índice en 'Resources/{indexPath}'.");
-            return;
-        }
+        if (indexFile == null) { Debug.LogError($"No se encontró el índice en 'Resources/{indexPath}'."); yield break; }
+        
         string[] subcategoryNames = indexFile.text.Split(new[] { "\r\n", "\n" }, System.StringSplitOptions.RemoveEmptyEntries);
-
-        // --- INICIO DE LA MODIFICACIÓN ---
-        // Forzamos al layout principal a reconstruirse para tener el ancho correcto al inicio.
+        
+        yield return null;
         LayoutRebuilder.ForceRebuildLayoutImmediate(contentContainer as RectTransform);
 
         foreach (string subcategoryName in subcategoryNames)
         {
             GameObject subcategoryHeader = Instantiate(subcategoryPrefab, contentContainer);
-            var titleText = subcategoryHeader.GetComponentInChildren<TMPro.TextMeshProUGUI>();
-            if (titleText != null) titleText.text = subcategoryName;
+            subcategoryHeader.GetComponentInChildren<TextMeshProUGUI>().text = subcategoryName;
 
             GameObject gridContainer = new GameObject(subcategoryName + " Grid");
             gridContainer.transform.SetParent(contentContainer, false);
             GridLayoutGroup gridLayout = gridContainer.AddComponent<GridLayoutGroup>();
             
-            // 1. AUMENTAMOS LA ALTURA DE LA CELDA PARA DAR ESPACIO AL NOMBRE
-            Vector2 cellSize = new Vector2(150, 180); // 150 para la imagen + 30 para el texto
+            Vector2 cellSize = new Vector2(150, 180);
             Vector2 spacing = new Vector2(15, 15);
             RectOffset padding = new RectOffset(10, 10, 10, 10);
             
-            // 2. CALCULAMOS CUÁNTAS COLUMNAS CABEN EN EL ANCHO DEL PANEL
             float parentWidth = (contentContainer as RectTransform).rect.width;
-            int columnCount = Mathf.FloorToInt(
-                (parentWidth - padding.left - padding.right + spacing.x) / 
-                (cellSize.x + spacing.x)
-            );
-            columnCount = Mathf.Max(1, columnCount); // Aseguramos que haya al menos 1 columna
+            int columnCount = Mathf.FloorToInt((parentWidth - padding.left - padding.right + spacing.x) / (cellSize.x + spacing.x));
+            columnCount = Mathf.Max(1, columnCount);
 
-            // 3. CONFIGURAMOS EL GRID CON LOS VALORES CALCULADOS
             gridLayout.padding = padding;
             gridLayout.cellSize = cellSize; 
             gridLayout.spacing = spacing;
-            gridLayout.constraint = GridLayoutGroup.Constraint.FixedColumnCount; // Fijamos el número de columnas
+            gridLayout.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
             gridLayout.constraintCount = columnCount;
 
             ContentSizeFitter fitter = gridContainer.AddComponent<ContentSizeFitter>();
             fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
             fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
             
-            // --- FIN DE LA MODIFICACIÓN ---
-
             string modelsPath = $"{CATALOG_BASE_PATH}/{categoryName}/{subcategoryName}";
             var models = Resources.LoadAll<GameObject>(modelsPath);
 
             foreach (var modelPrefab in models)
             {
                 GameObject card = Instantiate(itemCardPrefab, gridContainer.transform);
-                var cardText = card.GetComponentInChildren<TMPro.TextMeshProUGUI>();
-                if (cardText != null) cardText.text = modelPrefab.name;
+                card.GetComponentInChildren<TextMeshProUGUI>().text = modelPrefab.name;
 
                 Image thumbnailImage = card.transform.Find("ItemImage").GetComponent<Image>();
-                StartCoroutine(GenerateThumbnail(modelPrefab, thumbnailLayer, (sprite) => {
-                    if (thumbnailImage != null && sprite != null) thumbnailImage.sprite = sprite;
+                
+                yield return StartCoroutine(GetOrGenerateThumbnail(modelPrefab, thumbnailLayer, (sprite) => {
+                    if (card != null && thumbnailImage != null && sprite != null)
+                    {
+                        thumbnailImage.sprite = sprite;
+                        thumbnailImage.color = Color.white;
+                    }
                 }));
 
                 card.GetComponent<Button>().onClick.AddListener(() => OnModelSelected(modelPrefab));
@@ -164,34 +159,61 @@ public class CatalogManager : MonoBehaviour
         }
     }
     
-    private IEnumerator GenerateThumbnail(GameObject modelPrefab, int layer, System.Action<Sprite> callback)
+    private IEnumerator GetOrGenerateThumbnail(GameObject modelPrefab, int layer, System.Action<Sprite> callback)
+    {
+        string modelName = modelPrefab.name;
+
+        if (_runtimeCache.ContainsKey(modelName))
+        {
+            callback(_runtimeCache[modelName]);
+            yield break;
+        }
+
+        string cacheFilePath = Path.Combine(_thumbnailCachePath, modelName + ".png");
+        if (File.Exists(cacheFilePath))
+        {
+            byte[] fileData = File.ReadAllBytes(cacheFilePath);
+            Texture2D tex = new Texture2D(2, 2);
+            tex.LoadImage(fileData);
+            Sprite sprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
+            
+            _runtimeCache[modelName] = sprite;
+            callback(sprite);
+            yield break;
+        }
+
+        yield return StartCoroutine(GenerateThumbnailAndCache(modelPrefab, layer, cacheFilePath, (sprite) => {
+            if (sprite != null)
+            {
+                _runtimeCache[modelName] = sprite;
+            }
+            callback(sprite);
+        }));
+    }
+    
+    private IEnumerator GenerateThumbnailAndCache(GameObject modelPrefab, int layer, string cacheFilePath, System.Action<Sprite> callback)
     {
         if (_thumbnailCameraRig == null) { callback(null); yield break; }
+        
+        _thumbnailCameraRig.transform.position = new Vector3(5000, 5000, 5000);
         Camera cam = _thumbnailCameraRig.GetComponentInChildren<Camera>();
-
         GameObject modelInstance = Instantiate(modelPrefab);
         modelInstance.transform.localScale *= scaleMultiplier;
         SetLayerRecursively(modelInstance, layer);
         yield return null;
-
-        Bounds bounds = new Bounds();
+        Bounds bounds = new Bounds(modelInstance.transform.position, Vector3.zero);
         bool hasBounds = false;
         Renderer[] renderers = modelInstance.GetComponentsInChildren<Renderer>();
         foreach (Renderer r in renderers)
         {
+            if (!r.enabled) continue; 
             if (hasBounds) bounds.Encapsulate(r.bounds);
             else { bounds = r.bounds; hasBounds = true; }
         }
 
-        if (!hasBounds)
-        {
-            Destroy(modelInstance);
-            callback(null);
-            yield break;
-        }
+        if (!hasBounds) { Destroy(modelInstance); callback(null); yield break; }
         
-        float objectSize = Mathf.Max(bounds.size.x, bounds.size.y);
-        
+        float objectSize = Mathf.Max(bounds.size.x, bounds.size.y, bounds.size.z);
         float cameraSize = (objectSize / 2f);
         cam.orthographicSize = cameraSize * zoomMultiplier;
         if(cam.orthographicSize < 0.01f) cam.orthographicSize = 1f;
@@ -199,8 +221,7 @@ public class CatalogManager : MonoBehaviour
         GameObject wrapper = new GameObject("ModelWrapper");
         wrapper.transform.position = bounds.center;
         modelInstance.transform.SetParent(wrapper.transform, true);
-
-        wrapper.transform.position = cam.transform.position + new Vector3(0, 0, 10) + positionFineTune;
+        wrapper.transform.position = _thumbnailCameraRig.transform.position + Vector3.forward * 10 + positionFineTune;
         wrapper.transform.rotation = Quaternion.Euler(modelRotation);
         
         _thumbnailCameraRig.SetActive(true);
@@ -213,13 +234,17 @@ public class CatalogManager : MonoBehaviour
         Texture2D tex = new Texture2D(rt.width, rt.height, TextureFormat.ARGB32, false);
         tex.ReadPixels(new Rect(0, 0, rt.width, rt.height), 0, 0);
         tex.Apply();
+        
         RenderTexture.active = null;
         cam.targetTexture = null;
         
         _thumbnailCameraRig.SetActive(false);
-
         Destroy(rt);
         Destroy(wrapper);
+
+        byte[] pngData = tex.EncodeToPNG();
+        File.WriteAllBytes(cacheFilePath, pngData);
+        Debug.Log($"Miniatura guardada en caché: {cacheFilePath}");
 
         Sprite sprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
         callback(sprite);
@@ -228,26 +253,30 @@ public class CatalogManager : MonoBehaviour
     private void OnModelSelected(GameObject modelPrefab)
     {
         SelectedModelPrefab = modelPrefab;
-        Debug.Log($"✅ Modelo seleccionado: {modelPrefab.name}");
         CloseCatalogPanel();
     }
     
+    // --- FUNCIÓN CON LA CORRECCIÓN FINAL ---
     private GameObject CreateThumbnailCameraRig(int layer)
     {
-        GameObject rig = new GameObject("ThumbnailCameraRig_Internal");
-        rig.transform.position = new Vector3(5000, 5000, 5000);
-        Camera cam = rig.AddComponent<Camera>();
-        cam.orthographic = true;
-        cam.clearFlags = CameraClearFlags.SolidColor;
-        cam.backgroundColor = Color.clear;
-        cam.cullingMask = 1 << layer;
-        cam.enabled = true;
-        Light light = new GameObject("ThumbnailLight").AddComponent<Light>();
-        light.transform.SetParent(rig.transform);
-        light.type = LightType.Directional;
-        light.intensity = 1.2f;
-        light.transform.rotation = Quaternion.Euler(50, -30, 0);
-        rig.SetActive(false);
+        if (thumbnailCameraPrefab == null)
+        {
+            Debug.LogError("¡ERROR! El prefab 'Thumbnail Camera Prefab' no está asignado en el Inspector de CatalogManager.");
+            return null;
+        }
+
+        GameObject rig = Instantiate(thumbnailCameraPrefab);
+        rig.name = "ThumbnailCameraRig_Instanciado";
+        
+        Camera cam = rig.GetComponentInChildren<Camera>();
+        if(cam != null)
+        {
+            // Nos aseguramos de que la cámara esté desactivada por defecto.
+            // Solo la activaremos manualmente cuando vayamos a tomar la foto.
+            cam.enabled = false;
+            cam.cullingMask = 1 << layer;
+        }
+        
         return rig;
     }
     
@@ -264,6 +293,5 @@ public class CatalogManager : MonoBehaviour
             SetLayerRecursively(child.gameObject, layer);
         }
     }
-
     #endregion
 }
