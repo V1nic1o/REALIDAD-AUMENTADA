@@ -1,33 +1,26 @@
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.XR.ARFoundation;
 using UnityEngine.EventSystems;
-
-
-// Ya no necesitamos ARSubsystems para el raycast de planos
-// using UnityEngine.XR.ARSubsystems;
+using UnityEngine.XR.ARFoundation;
 
 [RequireComponent(typeof(ARRaycastManager))]
 public class PlaceObjectOnTap : MonoBehaviour
 {
     [Header("Object Creation")]
-    public GameObject gameObjectToInstantiate;
     public LayerMask placeableLayer;
-    
-    // --- NUEVA VARIABLE ---
-    // La capa donde se generará la malla del entorno
     public LayerMask environmentLayer;
 
     [Header("Interaction Settings")]
-    [Tooltip("La velocidad a la que el objeto cambia de tamaño. Con la fórmula suave, 1.0 es un buen valor inicial.")]
-    public float scaleSpeed = 1.0f; 
+    [Tooltip("Tiempo en segundos a esperar después de seleccionar un objeto en el catálogo antes de poder colocarlo.")]
+    [SerializeField] private float placementDelay = 0.5f;
+    public float scaleSpeed = 1.0f;
     public float minScale = 0.1f;
     public float maxScale = 2.0f;
     public float rotationSpeed = 1.0f;
-    [Tooltip("Cuánto puede moverse un dedo antes de que deje de considerarse un 'ancla' para rotar.")]
     public float rotationDragThreshold = 2.0f;
 
-    private GameObject selectedObject; // Esta variable siempre guardará al PADRE
+    private GameObject selectedObject;
     private ARRaycastManager _raycastManager;
     private Material originalMaterial;
     private Material selectedMaterial;
@@ -36,7 +29,7 @@ public class PlaceObjectOnTap : MonoBehaviour
     private float lastTapTime = 0f;
     private readonly float doubleTapTimeThreshold = 0.3f;
     private GameObject lastTappedObject = null;
-    
+
     private float placementCooldown = 0f;
     private readonly float cooldownDuration = 0.2f;
 
@@ -49,6 +42,8 @@ public class PlaceObjectOnTap : MonoBehaviour
 
     void Update()
     {
+        if (CatalogManager.IsOpen) return;
+
         if (placementCooldown > 0)
         {
             placementCooldown -= Time.deltaTime;
@@ -69,7 +64,7 @@ public class PlaceObjectOnTap : MonoBehaviour
             if (touch.phase == TouchPhase.Began)
             {
                 if (EventSystem.current.IsPointerOverGameObject(touch.fingerId)) return;
-                
+
                 if (Physics.Raycast(ray, out RaycastHit hit, Mathf.Infinity, placeableLayer))
                 {
                     GameObject objectRoot = hit.transform.parent != null ? hit.transform.parent.gameObject : hit.transform.gameObject;
@@ -91,39 +86,105 @@ public class PlaceObjectOnTap : MonoBehaviour
                     return;
                 }
             }
-            
+
             if (touch.phase == TouchPhase.Moved && isDraggingObject && selectedObject != null)
             {
-                // --- LÓGICA DE ARRASTRE ACTUALIZADA ---
-                // Ahora arrastramos el objeto sobre la malla del entorno
                 if (Physics.Raycast(ray, out RaycastHit hit, Mathf.Infinity, environmentLayer))
                 {
-                    selectedObject.transform.position = hit.point;
-                    // Hacemos que el objeto se adapte a la inclinación de la superficie
+                    // Al arrastrar, también aplicamos la corrección de altura
+                    Vector3 newPosition = hit.point;
+                    Bounds combinedBounds = GetObjectBounds(selectedObject);
+                    if (combinedBounds.size != Vector3.zero)
+                    {
+                        float offset = hit.point.y - combinedBounds.min.y;
+                        newPosition.y += offset;
+                    }
+
+                    selectedObject.transform.position = newPosition;
                     selectedObject.transform.rotation = Quaternion.FromToRotation(Vector3.up, hit.normal);
                 }
             }
-            
+
             if (touch.phase == TouchPhase.Ended)
             {
                 if (isDraggingObject) { isDraggingObject = false; return; }
                 if (placementCooldown > 0f) return;
-                
+
                 if (Physics.Raycast(ray, out RaycastHit hitOnPlaceable, Mathf.Infinity, placeableLayer)) return;
 
                 if (selectedObject != null)
                 {
                     DeselectObject();
                 }
-                // --- LÓGICA DE COLOCACIÓN ACTUALIZADA ---
-                // Si no hay nada seleccionado, buscamos la malla del entorno para colocar un objeto nuevo
-                else if (Physics.Raycast(ray, out RaycastHit placementHit, Mathf.Infinity, environmentLayer))
+                else if (CatalogManager.SelectedModelPrefab != null
+                         && Time.time - CatalogManager.LastSelectionTime > placementDelay
+                         && Physics.Raycast(ray, out RaycastHit placementHit, Mathf.Infinity, environmentLayer))
                 {
-                    GameObject newObject = Instantiate(gameObjectToInstantiate, placementHit.point, Quaternion.FromToRotation(Vector3.up, placementHit.normal));
-                    newObject.AddComponent<ARAnchor>(); // Añadimos el ancla para estabilidad
+                    // --- CORRECCIÓN ---
+                    // Ahora solo iniciamos la corrutina desde aquí
+                    StartCoroutine(PlaceNewObject_Coroutine(placementHit));
                 }
             }
         }
+    }
+
+    // --- NUEVA CORRUTINA PARA COLOCAR OBJETOS ---
+    private IEnumerator PlaceNewObject_Coroutine(RaycastHit placementHit)
+    {
+        // 1. Instanciamos en el punto del toque (el pivote queda en el suelo)
+        GameObject newObject = Instantiate(CatalogManager.SelectedModelPrefab, placementHit.point, Quaternion.identity);
+
+        // 2. Esperamos un frame para que los bounds se inicialicen correctamente
+        yield return null;
+
+        // 3. Calculamos los límites combinados del nuevo objeto y todos sus hijos.
+        Bounds combinedBounds = GetObjectBounds(newObject);
+
+        // Solo aplicamos el offset si el objeto tiene un tamaño válido
+        if (combinedBounds.size != Vector3.zero)
+        {
+            // 4. Calculamos cuánto se ha "hundido" el objeto bajo el punto de toque.
+            float offset = placementHit.point.y - combinedBounds.min.y;
+
+            // 5. Movemos el objeto hacia arriba esa cantidad exacta.
+            newObject.transform.position += new Vector3(0, offset, 0);
+        }
+
+        // 6. Cambiamos la capa para que las interacciones funcionen
+        int placeableLayerIndex = LayerMask.NameToLayer("PlaceableLayer");
+        if (placeableLayerIndex != -1)
+        {
+            SetLayerRecursively(newObject, placeableLayerIndex);
+        }
+        else
+        {
+            Debug.LogError("La capa 'PlaceableLayer' no existe.");
+        }
+
+        // 7. Anclamos el objeto al mundo AR
+        newObject.AddComponent<ARAnchor>();
+    }
+
+    Bounds GetObjectBounds(GameObject obj)
+    {
+        Bounds combinedBounds = new Bounds();
+        Renderer[] renderers = obj.GetComponentsInChildren<Renderer>();
+        if (renderers.Length > 0)
+        {
+            combinedBounds = renderers[0].bounds;
+            foreach (Renderer renderer in renderers)
+            {
+                combinedBounds.Encapsulate(renderer.bounds);
+            }
+        }
+        return combinedBounds;
+    }
+
+    void SetLayerRecursively(GameObject obj, int newLayer)
+    {
+        if (obj == null) return;
+        obj.layer = newLayer;
+        foreach (Transform child in obj.transform) { if (child != null) SetLayerRecursively(child.gameObject, newLayer); }
     }
 
     void HandleTwoFingerGestures()
@@ -184,7 +245,7 @@ public class PlaceObjectOnTap : MonoBehaviour
         if (selectedObject != null)
         {
             Renderer objectRenderer = selectedObject.GetComponentInChildren<Renderer>();
-            if (objectRenderer != null)
+            if (objectRenderer != null && originalMaterial != null)
             {
                 objectRenderer.material = originalMaterial;
             }

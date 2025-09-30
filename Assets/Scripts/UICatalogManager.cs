@@ -36,8 +36,15 @@ public class CatalogManager : MonoBehaviour
     private string _thumbnailCachePath;
     private Dictionary<string, Sprite> _runtimeCache = new Dictionary<string, Sprite>();
 
+    public static bool IsOpen { get; private set; }
+    
+    // --- NUEVA VARIABLE PARA EL TIEMPO DE ESPERA ---
+    public static float LastSelectionTime { get; private set; }
+
     void Start()
     {
+        IsOpen = false;
+        LastSelectionTime = Time.time; // Inicializamos el tiempo
         catalogPanel.SetActive(false);
         if (toggleButton != null)
         {
@@ -53,13 +60,13 @@ public class CatalogManager : MonoBehaviour
         if (!Directory.Exists(_thumbnailCachePath))
         {
             Directory.CreateDirectory(_thumbnailCachePath);
-            Debug.Log($"Carpeta de caché de miniaturas creada en: {_thumbnailCachePath}");
         }
     }
 
     #region Lógica para Abrir y Cerrar el Panel
     public void OpenCatalogPanel()
     {
+        IsOpen = true;
         catalogPanel.SetActive(true);
         if (toggleButton != null) toggleButton.gameObject.SetActive(false);
         DisplayCategory("Vegetacion");
@@ -67,6 +74,7 @@ public class CatalogManager : MonoBehaviour
 
     public void CloseCatalogPanel()
     {
+        IsOpen = false;
         catalogPanel.SetActive(false);
         if (toggleButton != null) toggleButton.gameObject.SetActive(true);
         DestroyThumbnailCameraRig();
@@ -91,7 +99,6 @@ public class CatalogManager : MonoBehaviour
     private IEnumerator DisplayCategory_Coroutine(string categoryName)
     {
         DestroyThumbnailCameraRig();
-        
         int thumbnailLayer = LayerMask.NameToLayer("ThumbnailLayer");
         if (thumbnailLayer == -1) { Debug.LogError("La capa 'ThumbnailLayer' no existe."); yield break; }
 
@@ -121,7 +128,6 @@ public class CatalogManager : MonoBehaviour
             Vector2 cellSize = new Vector2(150, 180);
             Vector2 spacing = new Vector2(15, 15);
             RectOffset padding = new RectOffset(10, 10, 10, 10);
-            
             float parentWidth = (contentContainer as RectTransform).rect.width;
             int columnCount = Mathf.FloorToInt((parentWidth - padding.left - padding.right + spacing.x) / (cellSize.x + spacing.x));
             columnCount = Mathf.Max(1, columnCount);
@@ -143,7 +149,6 @@ public class CatalogManager : MonoBehaviour
             {
                 GameObject card = Instantiate(itemCardPrefab, gridContainer.transform);
                 card.GetComponentInChildren<TextMeshProUGUI>().text = modelPrefab.name;
-
                 Image thumbnailImage = card.transform.Find("ItemImage").GetComponent<Image>();
                 
                 yield return StartCoroutine(GetOrGenerateThumbnail(modelPrefab, thumbnailLayer, (sprite) => {
@@ -163,11 +168,7 @@ public class CatalogManager : MonoBehaviour
     {
         string modelName = modelPrefab.name;
 
-        if (_runtimeCache.ContainsKey(modelName))
-        {
-            callback(_runtimeCache[modelName]);
-            yield break;
-        }
+        if (_runtimeCache.ContainsKey(modelName)) { callback(_runtimeCache[modelName]); yield break; }
 
         string cacheFilePath = Path.Combine(_thumbnailCachePath, modelName + ".png");
         if (File.Exists(cacheFilePath))
@@ -176,17 +177,13 @@ public class CatalogManager : MonoBehaviour
             Texture2D tex = new Texture2D(2, 2);
             tex.LoadImage(fileData);
             Sprite sprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
-            
             _runtimeCache[modelName] = sprite;
             callback(sprite);
             yield break;
         }
 
         yield return StartCoroutine(GenerateThumbnailAndCache(modelPrefab, layer, cacheFilePath, (sprite) => {
-            if (sprite != null)
-            {
-                _runtimeCache[modelName] = sprite;
-            }
+            if (sprite != null) { _runtimeCache[modelName] = sprite; }
             callback(sprite);
         }));
     }
@@ -244,39 +241,26 @@ public class CatalogManager : MonoBehaviour
 
         byte[] pngData = tex.EncodeToPNG();
         File.WriteAllBytes(cacheFilePath, pngData);
-        Debug.Log($"Miniatura guardada en caché: {cacheFilePath}");
-
+        
         Sprite sprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
         callback(sprite);
     }
-
+    
+    // --- FUNCIÓN MODIFICADA ---
     private void OnModelSelected(GameObject modelPrefab)
     {
         SelectedModelPrefab = modelPrefab;
+        LastSelectionTime = Time.time; // Guardamos la hora de la selección
         CloseCatalogPanel();
     }
     
-    // --- FUNCIÓN CON LA CORRECCIÓN FINAL ---
     private GameObject CreateThumbnailCameraRig(int layer)
     {
-        if (thumbnailCameraPrefab == null)
-        {
-            Debug.LogError("¡ERROR! El prefab 'Thumbnail Camera Prefab' no está asignado en el Inspector de CatalogManager.");
-            return null;
-        }
-
+        if (thumbnailCameraPrefab == null) { Debug.LogError("El prefab 'Thumbnail Camera Prefab' no está asignado."); return null; }
         GameObject rig = Instantiate(thumbnailCameraPrefab);
         rig.name = "ThumbnailCameraRig_Instanciado";
-        
         Camera cam = rig.GetComponentInChildren<Camera>();
-        if(cam != null)
-        {
-            // Nos aseguramos de que la cámara esté desactivada por defecto.
-            // Solo la activaremos manualmente cuando vayamos a tomar la foto.
-            cam.enabled = false;
-            cam.cullingMask = 1 << layer;
-        }
-        
+        if(cam != null) { cam.enabled = false; cam.cullingMask = 1 << layer; }
         return rig;
     }
     
@@ -288,10 +272,7 @@ public class CatalogManager : MonoBehaviour
     private void SetLayerRecursively(GameObject obj, int layer)
     {
         obj.layer = layer;
-        foreach (Transform child in obj.transform)
-        {
-            SetLayerRecursively(child.gameObject, layer);
-        }
+        foreach (Transform child in obj.transform) { SetLayerRecursively(child.gameObject, layer); }
     }
     #endregion
 }

@@ -11,7 +11,7 @@ GameObject:
   - component: {fileID: 7230331968896156882}
   - component: {fileID: 4937844816364393518}
   - component: {fileID: 399343037758080599}
-  - component: {fileID: 8399990013738430193}
+  - component: {fileID: 4974959273519610892}
   m_Layer: 0
   m_Name: Grama China
   m_TagString: Untagged
@@ -87,8 +87,8 @@ MeshRenderer:
   m_SortingLayer: 0
   m_SortingOrder: 0
   m_AdditionalVertexStreams: {fileID: 0}
---- !u!135 &8399990013738430193
-SphereCollider:
+--- !u!64 &4974959273519610892
+MeshCollider:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
@@ -105,6 +105,7 @@ SphereCollider:
   m_IsTrigger: 0
   m_ProvidesContacts: 0
   m_Enabled: 1
-  serializedVersion: 3
-  m_Radius: 0.5
-  m_Center: {x: 0, y: 0, z: 0}
+  serializedVersion: 5
+  m_Convex: 1
+  m_CookingOptions: 30
+  m_Mesh: {fileID: 10207, guid: 0000000000000000e000000000000000, type: 0}
