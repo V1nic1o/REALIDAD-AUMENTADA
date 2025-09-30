@@ -3514,9 +3514,10 @@ MonoBehaviour:
   environmentLayer:
     serializedVersion: 2
     m_Bits: 128
-  scaleSpeed: 1
+  placementDelay: 0.5
+  scaleSpeed: 0.3
   minScale: 0.1
-  maxScale: 2
+  maxScale: 4
   rotationSpeed: 1
   rotationDragThreshold: 2
 --- !u!114 &1494686259
@@ -4188,7 +4189,7 @@ MonoBehaviour:
   m_HandleRect: {fileID: 101980807}
   m_Direction: 2
   m_Value: 0
-  m_Size: 1
+  m_Size: 0.867347
   m_NumberOfSteps: 0
   m_OnValueChanged:
     m_PersistentCalls:

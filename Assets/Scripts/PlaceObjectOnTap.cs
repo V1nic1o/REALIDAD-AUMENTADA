@@ -14,10 +14,12 @@ public class PlaceObjectOnTap : MonoBehaviour
     [Header("Interaction Settings")]
     [Tooltip("Tiempo en segundos a esperar después de seleccionar un objeto en el catálogo antes de poder colocarlo.")]
     [SerializeField] private float placementDelay = 0.5f;
-    public float scaleSpeed = 1.0f;
+    [Tooltip("Ajusta la sensibilidad del escalado. Valores más bajos son menos sensibles.")]
+    public float scaleSpeed = 0.5f; // Valor reducido para menos sensibilidad
     public float minScale = 0.1f;
     public float maxScale = 2.0f;
-    public float rotationSpeed = 1.0f;
+    [Tooltip("Ajusta la sensibilidad de la rotación. Valores más bajos son menos sensibles. Se recomienda 0.5")]
+    public float rotationSpeed = 0.5f; // Valor reducido para menos sensibilidad
     public float rotationDragThreshold = 2.0f;
 
     private GameObject selectedObject;
@@ -91,17 +93,10 @@ public class PlaceObjectOnTap : MonoBehaviour
             {
                 if (Physics.Raycast(ray, out RaycastHit hit, Mathf.Infinity, environmentLayer))
                 {
-                    // Al arrastrar, también aplicamos la corrección de altura
-                    Vector3 newPosition = hit.point;
-                    Bounds combinedBounds = GetObjectBounds(selectedObject);
-                    if (combinedBounds.size != Vector3.zero)
-                    {
-                        float offset = hit.point.y - combinedBounds.min.y;
-                        newPosition.y += offset;
-                    }
-
-                    selectedObject.transform.position = newPosition;
+                    selectedObject.transform.position = hit.point;
                     selectedObject.transform.rotation = Quaternion.FromToRotation(Vector3.up, hit.normal);
+                    // Al arrastrar, también lo mantenemos pegado al suelo
+                    GroundObject(selectedObject);
                 }
             }
 
@@ -120,37 +115,19 @@ public class PlaceObjectOnTap : MonoBehaviour
                          && Time.time - CatalogManager.LastSelectionTime > placementDelay
                          && Physics.Raycast(ray, out RaycastHit placementHit, Mathf.Infinity, environmentLayer))
                 {
-                    // --- CORRECCIÓN ---
-                    // Ahora solo iniciamos la corrutina desde aquí
                     StartCoroutine(PlaceNewObject_Coroutine(placementHit));
                 }
             }
         }
     }
 
-    // --- NUEVA CORRUTINA PARA COLOCAR OBJETOS ---
     private IEnumerator PlaceNewObject_Coroutine(RaycastHit placementHit)
     {
-        // 1. Instanciamos en el punto del toque (el pivote queda en el suelo)
         GameObject newObject = Instantiate(CatalogManager.SelectedModelPrefab, placementHit.point, Quaternion.identity);
-
-        // 2. Esperamos un frame para que los bounds se inicialicen correctamente
         yield return null;
+        
+        GroundObject(newObject);
 
-        // 3. Calculamos los límites combinados del nuevo objeto y todos sus hijos.
-        Bounds combinedBounds = GetObjectBounds(newObject);
-
-        // Solo aplicamos el offset si el objeto tiene un tamaño válido
-        if (combinedBounds.size != Vector3.zero)
-        {
-            // 4. Calculamos cuánto se ha "hundido" el objeto bajo el punto de toque.
-            float offset = placementHit.point.y - combinedBounds.min.y;
-
-            // 5. Movemos el objeto hacia arriba esa cantidad exacta.
-            newObject.transform.position += new Vector3(0, offset, 0);
-        }
-
-        // 6. Cambiamos la capa para que las interacciones funcionen
         int placeableLayerIndex = LayerMask.NameToLayer("PlaceableLayer");
         if (placeableLayerIndex != -1)
         {
@@ -160,8 +137,6 @@ public class PlaceObjectOnTap : MonoBehaviour
         {
             Debug.LogError("La capa 'PlaceableLayer' no existe.");
         }
-
-        // 7. Anclamos el objeto al mundo AR
         newObject.AddComponent<ARAnchor>();
     }
 
@@ -172,9 +147,9 @@ public class PlaceObjectOnTap : MonoBehaviour
         if (renderers.Length > 0)
         {
             combinedBounds = renderers[0].bounds;
-            foreach (Renderer renderer in renderers)
+            for (int i = 1; i < renderers.Length; i++)
             {
-                combinedBounds.Encapsulate(renderer.bounds);
+                combinedBounds.Encapsulate(renderers[i].bounds);
             }
         }
         return combinedBounds;
@@ -209,12 +184,20 @@ public class PlaceObjectOnTap : MonoBehaviour
         float prevMagnitude = (touchZeroPrevPos - touchOnePrevPos).magnitude;
         float currentMagnitude = (touchZero.position - touchOne.position).magnitude;
         float difference = currentMagnitude - prevMagnitude;
-        float scaleFactor = difference * (scaleSpeed / 1000);
+        
+        // --- CORRECCIÓN DE SENSIBILIDAD ---
+        // Se ajusta la fórmula para que el escalado sea más suave
+        float scaleFactor = difference * (scaleSpeed / 100);
+        
         Vector3 newScale = selectedObject.transform.localScale + Vector3.one * scaleFactor;
         newScale.x = Mathf.Clamp(newScale.x, minScale, maxScale);
         newScale.y = Mathf.Clamp(newScale.y, minScale, maxScale);
         newScale.z = Mathf.Clamp(newScale.z, minScale, maxScale);
+        
         selectedObject.transform.localScale = newScale;
+
+        // --- CORRECCIÓN DE POSICIÓN AL ESCALAR ---
+        GroundObject(selectedObject);
     }
 
     void HandleRotation(Vector2 anchorPos, Vector2 orbitingPos, Vector2 orbitingPrevPos)
@@ -222,7 +205,32 @@ public class PlaceObjectOnTap : MonoBehaviour
         Vector2 prevDirection = (orbitingPrevPos - anchorPos).normalized;
         Vector2 currentDirection = (orbitingPos - anchorPos).normalized;
         float angle = Vector2.SignedAngle(prevDirection, currentDirection);
+        
+        // La sensibilidad se controla con la variable pública 'rotationSpeed'
         selectedObject.transform.Rotate(Vector3.up, -angle * rotationSpeed);
+    }
+    
+    // --- FUNCIÓN 'GroundObject' MEJORADA ---
+    void GroundObject(GameObject obj)
+    {
+        if (obj == null) return;
+        
+        // 1. Lanza un rayo desde un poco arriba del objeto hacia abajo para encontrar el suelo
+        Ray downRay = new Ray(obj.transform.position + Vector3.up, Vector3.down);
+        if (Physics.Raycast(downRay, out RaycastHit groundHit, 10.0f, environmentLayer))
+        {
+            // El punto exacto del suelo está en groundHit.point
+
+            // 2. Calculamos los límites actuales del objeto
+            Bounds bounds = GetObjectBounds(obj);
+            if (bounds.size == Vector3.zero) return;
+
+            // 3. Calculamos la diferencia entre el punto más bajo del objeto y el suelo real
+            float offset = groundHit.point.y - bounds.min.y;
+
+            // 4. Aplicamos esa diferencia para mover el objeto y que su base toque el suelo
+            obj.transform.position += new Vector3(0, offset, 0);
+        }
     }
 
     void SelectObject(GameObject obj)
@@ -263,5 +271,5 @@ public class PlaceObjectOnTap : MonoBehaviour
             Destroy(objectToDelete);
             placementCooldown = cooldownDuration;
         }
-    }
+    } 
 }
