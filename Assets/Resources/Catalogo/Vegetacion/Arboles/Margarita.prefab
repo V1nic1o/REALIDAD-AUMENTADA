@@ -63,6 +63,9 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 385391086365103262, guid: aeda8be0679054316a9b6f3778b09dd1, type: 3}
       insertIndex: -1
       addedObject: {fileID: 1749845862633487155}
+    - targetCorrespondingSourceObject: {fileID: 385391086365103262, guid: aeda8be0679054316a9b6f3778b09dd1, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 7125482231155487303}
   m_SourcePrefab: {fileID: 100100000, guid: aeda8be0679054316a9b6f3778b09dd1, type: 3}
 --- !u!1 &3093445030967388893 stripped
 GameObject:
@@ -91,3 +94,16 @@ MeshCollider:
   m_Convex: 1
   m_CookingOptions: 30
   m_Mesh: {fileID: 5002963366536585163, guid: d3e86e8312025d54ea4b2aff32264f24, type: 3}
+--- !u!114 &7125482231155487303
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3093445030967388893}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 69b7cfc9f63ac4d44bbe56941ad5b3f6, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  itemName: Margarita
