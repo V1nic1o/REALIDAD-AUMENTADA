@@ -12,6 +12,10 @@ public class CatalogManager : MonoBehaviour
     public Button toggleButton;
     public Button closeButton;
 
+       // --- AÑADE LA NUEVA LÍNEA AQUÍ ---
+    [Header("Botones Externos a Ocultar")]
+    public GameObject openSavePanelButtonGO;
+
     [Header("Iconos Opcionales")]
     public Sprite iconOpen;
     public Sprite iconClose;
@@ -69,6 +73,8 @@ public class CatalogManager : MonoBehaviour
         IsOpen = true;
         catalogPanel.SetActive(true);
         if (toggleButton != null) toggleButton.gameObject.SetActive(false);
+
+        if (openSavePanelButtonGO != null) openSavePanelButtonGO.SetActive(false);
         DisplayCategory("Vegetacion");
     }
 
@@ -77,6 +83,8 @@ public class CatalogManager : MonoBehaviour
         IsOpen = false;
         catalogPanel.SetActive(false);
         if (toggleButton != null) toggleButton.gameObject.SetActive(true);
+
+        if (openSavePanelButtonGO != null) openSavePanelButtonGO.SetActive(true);
         DestroyThumbnailCameraRig();
     }
     #endregion
