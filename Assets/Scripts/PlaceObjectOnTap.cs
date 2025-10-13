@@ -44,6 +44,18 @@ public class PlaceObjectOnTap : MonoBehaviour
 
     void Update()
     {
+
+        // Si el interruptor de la UI está activado, no hagas nada en absoluto.
+if (UIManager.IsUIOpen)
+{
+    // Opcional pero recomendado: Si hay un objeto seleccionado, lo deseleccionamos
+    // para evitar que se quede "pegado" en estado seleccionado.
+    if (selectedObject != null)
+    {
+        DeselectObject();
+    }
+    return;
+}
         if (CatalogManager.IsOpen) return;
 
         if (placementCooldown > 0)

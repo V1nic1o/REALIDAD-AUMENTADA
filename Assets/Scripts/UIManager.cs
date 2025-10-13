@@ -8,8 +8,8 @@ using System.Linq;
 public class UIManager : MonoBehaviour
 {
     [Header("Referencias a Servicios")]
-    public BackendService backendService; // Referencia a nuestro nuevo script
-    public PlaceObjectOnTap objectPlacer; // Referencia al script que conoce la capa
+    public BackendService backendService;
+    public PlaceObjectOnTap objectPlacer;
 
     [Header("Paneles Principales")]
     public GameObject catalogPanel;
@@ -17,19 +17,29 @@ public class UIManager : MonoBehaviour
     [Header("UI de Guardado de Diseño")]
     public GameObject saveDesignPanel;
     public TMP_InputField nameInputField;
-    
+
+    [Header("UI de Carga")]
+    public GameObject loadingPanel;
+
     [Header("Botones de Acción Principales")]
     public GameObject openSavePanelButtonGO;
     public GameObject toggleCatalogButtonGO;
 
+    public static bool IsUIOpen { get; private set; }
+    
+    private bool isSaving = false;
+
     void Start()
     {
-        // (El Start se queda como lo tienes, conectando los botones desde el Inspector)
-        saveDesignPanel.SetActive(false);
+        IsUIOpen = false;
+        if (saveDesignPanel != null) saveDesignPanel.SetActive(false);
+        if (loadingPanel != null) loadingPanel.SetActive(false);
     }
 
     public void OpenSavePanel()
     {
+        IsUIOpen = true; 
+
         if (openSavePanelButtonGO != null) openSavePanelButtonGO.SetActive(false);
         if (toggleCatalogButtonGO != null) toggleCatalogButtonGO.SetActive(false);
         if (catalogPanel != null && catalogPanel.activeSelf) { catalogPanel.SetActive(false); }
@@ -38,40 +48,60 @@ public class UIManager : MonoBehaviour
 
     public void CloseSavePanel()
     {
+        IsUIOpen = false; 
+
         if (openSavePanelButtonGO != null) openSavePanelButtonGO.SetActive(true);
         if (toggleCatalogButtonGO != null) toggleCatalogButtonGO.SetActive(true);
         if (saveDesignPanel != null) { saveDesignPanel.SetActive(false); }
     }
 
-    // Esta función ahora inicia una corrutina
     public void OnConfirmSave()
     {
+        if (isSaving) return;
+
         if (nameInputField == null || string.IsNullOrWhiteSpace(nameInputField.text))
         {
             Debug.LogWarning("El nombre del diseño no puede estar vacío.");
             return; 
         }
         
-        // Iniciamos la corrutina que hará todo el trabajo
         StartCoroutine(SaveProcess());
     }
 
     private IEnumerator SaveProcess()
     {
+        isSaving = true;
+
         string designName = nameInputField.text;
+        nameInputField.text = "";
+
         Debug.Log($"Iniciando proceso de guardado para el diseño: {designName}");
         
-        // Cerramos el panel para que no salga en la foto
-        CloseSavePanel();
+        // --- INICIO DE LA LÓGICA DE CAPTURA LIMPIA ---
+
+        // 1. Ocultamos toda la UI visible antes de la captura.
+        if (saveDesignPanel != null) saveDesignPanel.SetActive(false);
+        if (openSavePanelButtonGO != null) openSavePanelButtonGO.SetActive(false);
+        if (toggleCatalogButtonGO != null) toggleCatalogButtonGO.SetActive(false);
+        if (catalogPanel != null) catalogPanel.SetActive(false);
+        if (loadingPanel != null) loadingPanel.SetActive(false); // Nos aseguramos de que esté oculto
+
+        // 2. Esperamos un frame para que la UI desaparezca de la pantalla.
+        yield return new WaitForEndOfFrame();
         
-        // --- 1. Contar los Objetos en la Escena ---
+        // 3. Tomamos la captura de pantalla "limpia".
+        Texture2D screenshotTexture = ScreenCapture.CaptureScreenshotAsTexture();
+        byte[] screenshotData = screenshotTexture.EncodeToPNG();
+        Destroy(screenshotTexture);
+
+        // 4. Volvemos a mostrar el panel de carga para el usuario.
+        if (loadingPanel != null) loadingPanel.SetActive(true);
+        IsUIOpen = true; // Mantenemos las interacciones bloqueadas mientras carga
+
+        // --- FIN DE LA LÓGICA DE CAPTURA LIMPIA ---
+
         List<DesignItemData> items = new List<DesignItemData>();
-
-        // --- CORRECCIÓN ---
-        // Usamos el método nuevo que recomienda Unity
         PlaceableObject[] placedObjects = FindObjectsByType<PlaceableObject>(FindObjectsSortMode.None);
-
-        // Agrupamos por nombre y contamos
         var itemGroups = placedObjects.GroupBy(obj => obj.itemName)
                                       .Select(group => new DesignItemData
                                       {
@@ -80,14 +110,6 @@ public class UIManager : MonoBehaviour
                                       });
         items.AddRange(itemGroups);
 
-        // --- 2. Esperar un frame y Tomar la Captura de Pantalla ---
-        yield return new WaitForEndOfFrame();
-        
-        Texture2D screenshotTexture = ScreenCapture.CaptureScreenshotAsTexture();
-        byte[] screenshotData = screenshotTexture.EncodeToPNG();
-        Destroy(screenshotTexture); // Liberar memoria
-
-        // --- 3. Crear el Objeto de Datos y Llamar al BackendService ---
         DesignCreateData designData = new DesignCreateData
         {
             name = designName,
@@ -102,5 +124,13 @@ public class UIManager : MonoBehaviour
         {
             Debug.LogError("BackendService no está asignado en el UIManager.");
         }
+
+        // --- OCULTAMOS Y DESBLOQUEAMOS AL FINAL ---
+        if (loadingPanel != null) loadingPanel.SetActive(false);
+        if (openSavePanelButtonGO != null) openSavePanelButtonGO.SetActive(true); // Reactivamos los botones principales
+        if (toggleCatalogButtonGO != null) toggleCatalogButtonGO.SetActive(true);
+        
+        IsUIOpen = false;
+        isSaving = false;
     }
 }
